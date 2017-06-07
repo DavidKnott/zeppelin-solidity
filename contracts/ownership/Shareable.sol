@@ -60,15 +60,23 @@ contract Shareable {
    * @param _required The amount required for a transaction to be approved.
    */
   function Shareable(address[] _owners, uint _required) {
+    setOwners(_owners);
+    required = _required;
+    if (required > owners.length) {
+      throw;
+    }
+  }
+
+  /** 
+   * @dev Sets addresses of owners capable of giving sig for confirmation.
+   * @param _owners A list of owners.
+   */
+  function setOwners(address[] _owners) private {
     owners[1] = msg.sender;
     ownerIndex[msg.sender] = 1;
     for (uint i = 0; i < _owners.length; ++i) {
       owners[2 + i] = _owners[i];
       ownerIndex[_owners[i]] = 2 + i;
-    }
-    required = _required;
-    if (required > owners.length) {
-      throw;
     }
   }
 
@@ -76,12 +84,8 @@ contract Shareable {
    * @dev Revokes a prior confirmation of the given operation.
    * @param _operation A string identifying the operation.
    */
-  function revoke(bytes32 _operation) external {
+  function revoke(bytes32 _operation) onlyOwner external {
     uint index = ownerIndex[msg.sender];
-    // make sure they're an owner
-    if (index == 0) {
-      return;
-    }
     uint ownerIndexBit = 2**index;
     var pending = pendings[_operation];
     if (pending.ownersDone & ownerIndexBit > 0) {
@@ -115,14 +119,9 @@ contract Shareable {
    * @param _owner The owner address.
    * @return True if the owner has confirmed and false otherwise.
    */
-  function hasConfirmed(bytes32 _operation, address _owner) constant returns (bool) {
+  function hasConfirmed(bytes32 _operation, address _owner) onlyOwner constant returns (bool) {
     var pending = pendings[_operation];
     uint index = ownerIndex[_owner];
-
-    // make sure they're an owner
-    if (index == 0) {
-      return false;
-    }
 
     // determine the bit to set for this owner.
     uint ownerIndexBit = 2**index;
@@ -134,24 +133,12 @@ contract Shareable {
    * @param _operation The operation identifier.
    * @return Returns true when operation can be executed.
    */
-  function confirmAndCheck(bytes32 _operation) internal returns (bool) {
+  function confirmAndCheck(bytes32 _operation) onlyOwner internal returns (bool) {
     // determine what index the present sender is:
-    uint index = ownerIndex[msg.sender];
     // make sure they're an owner
-    if (index == 0) {
-      throw;
-    }
-
-    var pending = pendings[_operation];
-    // if we're not yet working on this operation, switch over and reset the confirmation status.
-    if (pending.yetNeeded == 0) {
-      // reset count of confirmations needed.
-      pending.yetNeeded = required;
-      // reset which owners have confirmed (none) - set our bitmap to 0.
-      pending.ownersDone = 0;
-      pending.index = pendingsIndex.length++;
-      pendingsIndex[pending.index] = _operation;
-    }
+    uint index = ownerIndex[msg.sender];
+    checkConfirmationStatus(_operation);
+    PendingState pending = pendings[_operation];
     // determine the bit to set for this owner.
     uint ownerIndexBit = 2**index;
     // make sure we (the message sender) haven't confirmed this operation previously.
@@ -160,8 +147,7 @@ contract Shareable {
       // ok - check if count is enough to go ahead.
       if (pending.yetNeeded <= 1) {
         // enough confirmations: reset and run interior.
-        delete pendingsIndex[pendings[_operation].index];
-        delete pendings[_operation];
+        resetPending(_operation);
         return true;
       } else {
         // not enough: record that this owner in particular confirmed.
@@ -170,6 +156,35 @@ contract Shareable {
       }
     }
     return false;
+  }
+
+  /**
+   * @dev Checks the confirmation status and starts the confirmation 
+   * proccess if it hasn't been started.
+   * @param _operation The operation identifier.
+   */
+
+  function checkConfirmationStatus(bytes32 _operation) private {
+    PendingState pending = pendings[_operation];
+    // if we're not yet working on this operation, switch over and reset the confirmation status.
+      if (pending.yetNeeded == 0) {
+      // reset count of confirmations needed.
+      pending.yetNeeded = required;
+      // reset which owners have confirmed (none) - set our bitmap to 0.
+      pending.ownersDone = 0;
+      pending.index = pendingsIndex.length++;
+      pendingsIndex[pending.index] = _operation;
+    }
+  }
+
+  /**
+   * @dev Resets pending operation.
+   * @param _operation The operation identifier.
+   */
+  function resetPending(bytes32 _operation) private {
+    // enough confirmations: reset
+    delete pendingsIndex[pendings[_operation].index];
+    delete pendings[_operation];
   }
 
 
